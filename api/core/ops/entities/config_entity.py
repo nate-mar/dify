@@ -7,6 +7,7 @@ class TracingProviderEnum(Enum):
     LANGFUSE = "langfuse"
     LANGSMITH = "langsmith"
     OPIK = "opik"
+    ARIZE_PHOENIX = "arizePhoenix"
 
 
 class BaseTracingConfig(BaseModel):

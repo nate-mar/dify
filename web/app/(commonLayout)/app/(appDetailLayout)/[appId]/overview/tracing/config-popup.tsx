@@ -38,6 +38,7 @@ const ConfigPopup: FC<PopupProps> = ({
   langSmithConfig,
   langFuseConfig,
   opikConfig,
+  arizePhoenixConfig,
   onConfigUpdated,
   onConfigRemoved,
 }) => {
@@ -122,6 +123,19 @@ const ConfigPopup: FC<PopupProps> = ({
     />
   )
 
+  const arizePhoenixPanel = (
+    <ProviderPanel
+      type={TracingProvider.opik}
+      readOnly={readOnly}
+      config={opikConfig}
+      hasConfigured={!!opikConfig}
+      onConfig={handleOnConfig(TracingProvider.arizePhoenix)}
+      isChosen={chosenProvider === TracingProvider.arizePhoenix}
+      onChoose={handleOnChoose(TracingProvider.arizePhoenix)}
+      key="arizePhoenix-provider-panel"
+    />
+  )
+
   const configuredProviderPanel = () => {
     const configuredPanels: ProviderPanel[] = []
 
@@ -133,6 +147,9 @@ const ConfigPopup: FC<PopupProps> = ({
 
     if (opikConfig)
       configuredPanels.push(opikPanel)
+
+    if (arizePhoenixConfig)
+      configuredPanels.push(arizePhoenixPanel)
 
     return configuredPanels
   }
@@ -149,6 +166,9 @@ const ConfigPopup: FC<PopupProps> = ({
     if (!opikConfig)
       notConfiguredPanels.push(opikPanel)
 
+    if (!arizePhoenixConfig)
+      notConfiguredPanels.push(arizePhoenixPanel)
+
     return notConfiguredPanels
   }
 
@@ -157,7 +177,9 @@ const ConfigPopup: FC<PopupProps> = ({
       return langSmithConfig
     if (currentProvider === TracingProvider.langfuse)
       return langFuseConfig
-    return opikConfig
+    if (currentProvider === TracingProvider.opik)
+      return opikConfig
+    return arizePhoenixConfig
   }
 
   return (
@@ -202,6 +224,7 @@ const ConfigPopup: FC<PopupProps> = ({
                 {langSmithPanel}
                 {langfusePanel}
                 {opikPanel}
+                {arizePhoenixPanel}
               </div>
             </>
           )

@@ -4,7 +4,7 @@ import React, { useCallback, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useBoolean } from 'ahooks'
 import Field from './field'
-import type { LangFuseConfig, LangSmithConfig, OpikConfig } from './type'
+import type { ArizePhoenixConfig, LangFuseConfig, LangSmithConfig, OpikConfig } from './type'
 import { TracingProvider } from './type'
 import { docURL } from './config'
 import {
@@ -21,7 +21,7 @@ import Toast from '@/app/components/base/toast'
 type Props = {
   appId: string
   type: TracingProvider
-  payload?: LangSmithConfig | LangFuseConfig | OpikConfig | null
+  payload?: LangSmithConfig | LangFuseConfig | OpikConfig | ArizePhoenixConfig | null
   onRemoved: () => void
   onCancel: () => void
   onSaved: (payload: LangSmithConfig | LangFuseConfig | OpikConfig) => void
@@ -49,6 +49,12 @@ const opikConfigTemplate = {
   workspace: '',
 }
 
+const arizePhoenixConfigTemplate = {
+  api_key: '',
+  project: '',
+  host: '',
+}
+
 const ProviderConfigModal: FC<Props> = ({
   appId,
   type,
@@ -68,11 +74,12 @@ const ProviderConfigModal: FC<Props> = ({
 
     if (type === TracingProvider.langSmith)
       return langSmithConfigTemplate
-
     else if (type === TracingProvider.langfuse)
       return langFuseConfigTemplate
+    else if (type === TracingProvider.opik)
+      return opikConfigTemplate
 
-    return opikConfigTemplate
+    return arizePhoenixConfigTemplate
   })())
   const [isShowRemoveConfirm, {
     setTrue: showRemoveConfirm,
@@ -123,6 +130,10 @@ const ProviderConfigModal: FC<Props> = ({
 
     if (type === TracingProvider.opik) {
       const postData = config as OpikConfig
+    }
+
+    if (type === TracingProvider.arizePhoenix) {
+      const postData = config as ArizePhoenixConfig
     }
 
     return errorMessage

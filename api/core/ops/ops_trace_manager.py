@@ -60,6 +60,12 @@ provider_config_map: dict[str, dict[str, Any]] = {
         "other_keys": ["project", "url", "workspace"],
         "trace_instance": OpikDataTrace,
     },
+    TracingProviderEnum.ARIZE_PHOENIX.value: {
+        "config_class": ArizePhoenixConfig,
+        "secret_keys": ["api_key"],
+        "other_keys": ["project", "host"],
+        "trace_instance": ArizePhoenixDataTrace,
+    },
 }
 
 

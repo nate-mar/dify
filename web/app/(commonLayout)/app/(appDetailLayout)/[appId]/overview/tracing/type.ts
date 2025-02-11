@@ -2,6 +2,7 @@ export enum TracingProvider {
   langSmith = 'langsmith',
   langfuse = 'langfuse',
   opik = 'opik',
+  arizePhoenix = 'arizePhoenix',
 }
 
 export type LangSmithConfig = {
@@ -22,3 +23,9 @@ export type OpikConfig = {
   workspace: string
   url: string
 }
+
+export type ArizePhoenixConfig = {
+  api_key: string;
+  project: string;
+  host: string;
+};
