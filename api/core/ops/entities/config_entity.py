@@ -87,6 +87,37 @@ class OpikConfig(BaseTracingConfig):
             raise ValueError("url should ends with /api/")
 
         return v
+    
+
+class ArizePhoenixConfig(BaseTracingConfig):
+    """
+    Model class for Arize Phoenix tracing config.
+    """
+
+    api_key: str | None = None
+    project: str | None = None
+    host: str = "https://phoenix.arize.com/v1/traces"
+
+    @field_validator("project")
+    @classmethod
+    def project_validator(cls, v, info: ValidationInfo):
+        if v is None or v == "":
+            v = "Default Project"
+
+        return v
+
+    @field_validator("host")
+    @classmethod
+    def host_validator(cls, v, info: ValidationInfo):
+        if v is None or v == "":
+            v = "https://phoenix.arize.com/v1/traces/"
+        if not v.startswith(("https://", "http://")):
+            raise ValueError("host must start with https:// or http://")
+        if not v.endswith("/v1/traces/"):
+            raise ValueError("host should ends with /v1/traces/")
+
+        return v
+
 
 
 OPS_FILE_PATH = "ops_trace/"
