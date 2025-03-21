@@ -6,8 +6,7 @@ import useSWR from 'swr'
 import { omit } from 'lodash-es'
 import { useBoolean } from 'ahooks'
 import { useContext } from 'use-context-selector'
-import { RiApps2Line, RiFocus2Line } from '@remixicon/react'
-import SegmentCard from '../documents/detail/completed/SegmentCard'
+import { RiApps2Line, RiFocus2Line, RiHistoryLine } from '@remixicon/react'
 import Textarea from './textarea'
 import s from './style.module.css'
 import ModifyRetrievalModal from './modify-retrieval-modal'
@@ -25,6 +24,7 @@ import type { RetrievalConfig } from '@/types/app'
 import useBreakpoints, { MediaType } from '@/hooks/use-breakpoints'
 import useTimestamp from '@/hooks/use-timestamp'
 import docStyle from '@/app/components/datasets/documents/detail/completed/style.module.css'
+import { CardSkelton } from '../documents/detail/completed/skeleton/general-list-skeleton'
 
 const limit = 10
 
@@ -34,11 +34,11 @@ type Props = {
 
 const RecordsEmpty: FC = () => {
   const { t } = useTranslation()
-  return <div className='bg-gray-50 rounded-2xl p-5'>
-    <div className={s.clockWrapper}>
-      <div className={cn(s.clockIcon, 'w-5 h-5')}></div>
+  return <div className='bg-workflow-process-bg rounded-2xl p-5'>
+    <div className='flex items-center justify-center w-10 h-10 p-1 rounded-[10px] border-[0.5px] border-components-card-border bg-components-card-bg shadow-lg shadow-shadow-shadow-5 backdrop-blur-[5px]'>
+      <RiHistoryLine className='w-5 h-5 text-text-tertiary' />
     </div>
-    <div className='my-2 text-gray-500 text-sm'>{t('datasetHitTesting.noRecentTip')}</div>
+    <div className='my-2 text-text-tertiary text-[13px] leading-4 font-medium'>{t('datasetHitTesting.noRecentTip')}</div>
   </div>
 }
 
@@ -180,11 +180,9 @@ const HitTestingPage: FC<Props> = ({ datasetId }: Props) => {
         <div className='flex flex-col pt-3'>
           {/* {renderHitResults(generalResultData)} */}
           {submitLoading
-            ? <SegmentCard
-              loading={true}
-              scene='hitTesting'
-              className='h-[216px]'
-            />
+            ? <div className='h-full flex flex-col py-3 px-4 rounded-t-2xl bg-background-body'>
+              <CardSkelton />
+            </div>
             : (
               (() => {
                 if (!hitResult?.records.length && !externalHitResult?.records.length)

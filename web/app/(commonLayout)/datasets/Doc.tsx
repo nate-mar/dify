@@ -68,7 +68,7 @@ const Doc = ({ apiBaseUrl }: DocProps) => {
 
   return (
     <div className="flex">
-      <div className={`fixed right-16 top-32 z-10 transition-all ${isTocExpanded ? 'w-64' : 'w-10'}`}>
+      <div className={`fixed right-20 top-32 z-10 transition-all ${isTocExpanded ? 'w-64' : 'w-10'}`}>
         {isTocExpanded
           ? (
             <nav className="toc w-full bg-gray-50 p-4 rounded-lg shadow-md max-h-[calc(100vh-150px)] overflow-y-auto">
@@ -78,7 +78,7 @@ const Doc = ({ apiBaseUrl }: DocProps) => {
                   onClick={() => setIsTocExpanded(false)}
                   className="text-gray-500 hover:text-gray-700"
                 >
-                ✕
+                  ✕
                 </button>
               </div>
               <ul className="space-y-2">

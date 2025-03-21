@@ -355,7 +355,7 @@ const SettingsModal: FC<ISettingsModalProps> = ({
                 <div className={cn('py-1 text-text-secondary system-sm-semibold')}>{t(`${prefixSettings}.more.entry`)}</div>
                 <p className={cn('pb-0.5 text-text-tertiary body-xs-regular')}>{t(`${prefixSettings}.more.copyRightPlaceholder`)} & {t(`${prefixSettings}.more.privacyPolicyPlaceholder`)}</p>
               </div>
-              <RiArrowRightSLine className='shrink-0 ml-1 w-4 h-4 text-text-secondary'/>
+              <RiArrowRightSLine className='shrink-0 ml-1 w-4 h-4 text-text-secondary' />
             </div>
           )}
           {/* more settings */}
@@ -439,23 +439,25 @@ const SettingsModal: FC<ISettingsModalProps> = ({
           <Button className='mr-2' onClick={onHide}>{t('common.operation.cancel')}</Button>
           <Button variant='primary' onClick={onClickSave} loading={saveLoading}>{t('common.operation.save')}</Button>
         </div>
-      </Modal >
-      {showAppIconPicker && (
-        <AppIconPicker
-          onSelect={(payload) => {
-            setAppIcon(payload)
-            setShowAppIconPicker(false)
-          }}
-          onClose={() => {
-            setAppIcon(icon_type === 'image'
-              ? { type: 'image', url: icon_url!, fileId: icon }
-              : { type: 'emoji', icon, background: icon_background! })
-            setShowAppIconPicker(false)
-          }}
-        />
-      )}
-    </>
 
+        {showAppIconPicker && (
+          <div onClick={e => e.stopPropagation()}>
+            <AppIconPicker
+              onSelect={(payload) => {
+                setAppIcon(payload)
+                setShowAppIconPicker(false)
+              }}
+              onClose={() => {
+                setAppIcon(icon_type === 'image'
+                  ? { type: 'image', url: icon_url!, fileId: icon }
+                  : { type: 'emoji', icon, background: icon_background! })
+                setShowAppIconPicker(false)
+              }}
+            />
+          </div>
+        )}
+      </Modal>
+    </>
   )
 }
 export default React.memo(SettingsModal)

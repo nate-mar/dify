@@ -3,6 +3,11 @@ import type {
   RerankingModeEnum,
 } from '@/models/datasets'
 import type { FileUpload } from '@/app/components/base/features/types'
+import type {
+  MetadataFilteringConditions,
+  MetadataFilteringModeEnum,
+} from '@/app/components/workflow/nodes/knowledge-retrieval/types'
+import type { ModelConfig as NodeModelConfig } from '@/app/components/workflow/types'
 export type Inputs = Record<string, string | number | object>
 
 export enum PromptMode {
@@ -170,6 +175,9 @@ export type DatasetConfigs = {
     }
   }
   reranking_enable?: boolean
+  metadata_filtering_mode?: MetadataFilteringModeEnum
+  metadata_filtering_conditions?: MetadataFilteringConditions
+  metadata_model_config?: NodeModelConfig
 }
 
 export type DebugRequestBody = {
