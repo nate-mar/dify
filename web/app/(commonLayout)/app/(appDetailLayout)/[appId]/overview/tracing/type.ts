@@ -28,4 +28,6 @@ export type ArizePhoenixConfig = {
   api_key: string;
   project: string;
   host: string;
-};
+  protocol: string;
+  space_key: string;
+}

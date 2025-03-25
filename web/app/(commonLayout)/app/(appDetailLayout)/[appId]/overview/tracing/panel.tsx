@@ -12,7 +12,7 @@ import { TracingProvider } from './type'
 import TracingIcon from './tracing-icon'
 import ConfigButton from './config-button'
 import cn from '@/utils/classnames'
-import { LangfuseIcon, LangsmithIcon, OpikIcon, ArizePhoenixIcon } from '@/app/components/base/icons/src/public/tracing'
+import { ArizePhoenixIcon, LangfuseIcon, LangsmithIcon, OpikIcon } from '@/app/components/base/icons/src/public/tracing'
 import Indicator from '@/app/components/header/indicator'
 import { fetchTracingConfig as doFetchTracingConfig, fetchTracingStatus, updateTracingStatus } from '@/service/apps'
 import type { TracingStatus } from '@/models/app'
@@ -117,6 +117,8 @@ const Panel: FC = () => {
       setLangFuseConfig(tracing_config as LangFuseConfig)
     else if (provider === TracingProvider.opik)
       setOpikConfig(tracing_config as OpikConfig)
+    else if (provider === TracingProvider.arizePhoenix)
+      setArizePhoenixConfig(tracing_config as ArizePhoenixConfig)
   }
 
   const handleTracingConfigRemoved = (provider: TracingProvider) => {
@@ -128,7 +130,7 @@ const Panel: FC = () => {
       setOpikConfig(null)
     else if (provider === TracingProvider.arizePhoenix)
       setArizePhoenixConfig(null)
-    
+
     if (provider === inUseTracingProvider) {
       handleTracingStatusChange({
         enabled: false,
@@ -188,6 +190,7 @@ const Panel: FC = () => {
                 langSmithConfig={langSmithConfig}
                 langFuseConfig={langFuseConfig}
                 opikConfig={opikConfig}
+                arizePhoenixConfig={arizePhoenixConfig}
                 onConfigUpdated={handleTracingConfigUpdated}
                 onConfigRemoved={handleTracingConfigRemoved}
                 controlShowPopup={controlShowPopup}
@@ -222,6 +225,7 @@ const Panel: FC = () => {
                 langSmithConfig={langSmithConfig}
                 langFuseConfig={langFuseConfig}
                 opikConfig={opikConfig}
+                arizePhoenixConfig={arizePhoenixConfig}
                 onConfigUpdated={handleTracingConfigUpdated}
                 onConfigRemoved={handleTracingConfigRemoved}
                 controlShowPopup={controlShowPopup}
@@ -229,25 +233,6 @@ const Panel: FC = () => {
             </div>
           </>
         )}
-        <div className='flex items-center' onClick={e => e.stopPropagation()}>
-          <ConfigButton
-            appId={appId}
-            readOnly={readOnly}
-            hasConfigured
-            className='ml-2'
-            enabled={enabled}
-            onStatusChange={handleTracingEnabledChange}
-            chosenProvider={inUseTracingProvider}
-            onChooseProvider={handleChooseProvider}
-            langSmithConfig={langSmithConfig}
-            langFuseConfig={langFuseConfig}
-            opikConfig={opikConfig}
-            arizePhoenixConfig={arizePhoenixConfig}
-            onConfigUpdated={handleTracingConfigUpdated}
-            onConfigRemoved={handleTracingConfigRemoved}
-            controlShowPopup={controlShowPopup}
-          />
-        </div>
       </div>
     </div>
   )

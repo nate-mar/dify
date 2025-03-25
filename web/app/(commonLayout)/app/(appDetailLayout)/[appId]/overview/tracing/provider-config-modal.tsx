@@ -25,7 +25,7 @@ type Props = {
   payload?: LangSmithConfig | LangFuseConfig | OpikConfig | ArizePhoenixConfig | null
   onRemoved: () => void
   onCancel: () => void
-  onSaved: (payload: LangSmithConfig | LangFuseConfig | OpikConfig) => void
+  onSaved: (payload: LangSmithConfig | LangFuseConfig | OpikConfig | ArizePhoenixConfig) => void
   onChosen: (provider: TracingProvider) => void
 }
 
@@ -52,8 +52,10 @@ const opikConfigTemplate = {
 
 const arizePhoenixConfigTemplate = {
   api_key: '',
+  space_key: '',
   project: '',
   host: '',
+  protocol: 'http',
 }
 
 const ProviderConfigModal: FC<Props> = ({
@@ -69,7 +71,7 @@ const ProviderConfigModal: FC<Props> = ({
   const isEdit = !!payload
   const isAdd = !isEdit
   const [isSaving, setIsSaving] = useState(false)
-  const [config, setConfig] = useState<LangSmithConfig | LangFuseConfig | OpikConfig>((() => {
+  const [config, setConfig] = useState<LangSmithConfig | LangFuseConfig | OpikConfig | ArizePhoenixConfig>((() => {
     if (isEdit)
       return payload
 
@@ -135,7 +137,7 @@ const ProviderConfigModal: FC<Props> = ({
     }
 
     if (type === TracingProvider.arizePhoenix) {
-      const postData = config as ArizePhoenixConfig
+      // const postData = config as ArizePhoenixConfig
     }
 
     return errorMessage
@@ -271,6 +273,45 @@ const ProviderConfigModal: FC<Props> = ({
                             value={(config as OpikConfig).url}
                             onChange={handleConfigChange('url')}
                             placeholder={'https://www.comet.com/opik/api/'}
+                          />
+                        </>
+                      )}
+                      {type === TracingProvider.arizePhoenix && (
+                        <>
+                          <Field
+                            label='API Key'
+                            labelClassName='!text-sm'
+                            value={(config as ArizePhoenixConfig).api_key}
+                            onChange={handleConfigChange('api_key')}
+                            placeholder={t(`${I18N_PREFIX}.placeholder`, { key: 'API Key' })!}
+                          />
+                          <Field
+                            label='Space Key'
+                            labelClassName='!text-sm'
+                            value={(config as ArizePhoenixConfig).space_key}
+                            onChange={handleConfigChange('space_key')}
+                            placeholder={t(`${I18N_PREFIX}.placeholder`, { key: 'Space Key' })!}
+                          />
+                          <Field
+                            label={t(`${I18N_PREFIX}.project`)!}
+                            labelClassName='!text-sm'
+                            value={(config as ArizePhoenixConfig).project}
+                            onChange={handleConfigChange('project')}
+                            placeholder='Default Project'
+                          />
+                          <Field
+                            label='Protocol'
+                            labelClassName='!text-sm'
+                            value={(config as ArizePhoenixConfig).protocol}
+                            onChange={handleConfigChange('protocol')}
+                            placeholder='http'
+                          />
+                          <Field
+                            label='Host'
+                            labelClassName='!text-sm'
+                            value={(config as ArizePhoenixConfig).host}
+                            onChange={handleConfigChange('host')}
+                            placeholder='https://phoenix.arize.com/v1/traces'
                           />
                         </>
                       )}
