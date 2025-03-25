@@ -13,8 +13,10 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from core.helper.encrypter import decrypt_token, encrypt_token, obfuscated_token
+from core.ops.arizephoenix_trace.arizephoenix_trace import ArizePhoenixDataTrace
 from core.ops.entities.config_entity import (
     OPS_FILE_PATH,
+    ArizePhoenixConfig,
     LangfuseConfig,
     LangSmithConfig,
     OpikConfig,
@@ -63,7 +65,7 @@ provider_config_map: dict[str, dict[str, Any]] = {
     TracingProviderEnum.ARIZE_PHOENIX.value: {
         "config_class": ArizePhoenixConfig,
         "secret_keys": ["api_key"],
-        "other_keys": ["project", "host"],
+        "other_keys": ["project", "host", "protocol"],
         "trace_instance": ArizePhoenixDataTrace,
     },
 }

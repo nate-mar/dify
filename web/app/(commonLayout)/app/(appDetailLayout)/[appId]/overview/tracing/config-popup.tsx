@@ -5,7 +5,7 @@ import { useTranslation } from 'react-i18next'
 import { useBoolean } from 'ahooks'
 import TracingIcon from './tracing-icon'
 import ProviderPanel from './provider-panel'
-import type { LangFuseConfig, LangSmithConfig, OpikConfig } from './type'
+import type { ArizePhoenixConfig, LangFuseConfig, LangSmithConfig, OpikConfig } from './type'
 import { TracingProvider } from './type'
 import ProviderConfigModal from './provider-config-modal'
 import Indicator from '@/app/components/header/indicator'
@@ -26,7 +26,8 @@ export type PopupProps = {
   langSmithConfig: LangSmithConfig | null
   langFuseConfig: LangFuseConfig | null
   opikConfig: OpikConfig | null
-  onConfigUpdated: (provider: TracingProvider, payload: LangSmithConfig | LangFuseConfig | OpikConfig) => void
+  arizePhoenixConfig: ArizePhoenixConfig | null
+  onConfigUpdated: (provider: TracingProvider, payload: LangSmithConfig | LangFuseConfig | OpikConfig | ArizePhoenixConfig) => void
   onConfigRemoved: (provider: TracingProvider) => void
 }
 
@@ -64,7 +65,7 @@ const ConfigPopup: FC<PopupProps> = ({
     }
   }, [onChooseProvider])
 
-  const handleConfigUpdated = useCallback((payload: LangSmithConfig | LangFuseConfig | OpikConfig) => {
+  const handleConfigUpdated = useCallback((payload: LangSmithConfig | LangFuseConfig | OpikConfig | ArizePhoenixConfig) => {
     onConfigUpdated(currentProvider!, payload)
     hideConfigModal()
   }, [currentProvider, hideConfigModal, onConfigUpdated])
@@ -74,8 +75,8 @@ const ConfigPopup: FC<PopupProps> = ({
     hideConfigModal()
   }, [currentProvider, hideConfigModal, onConfigRemoved])
 
-  const providerAllConfigured = langSmithConfig && langFuseConfig && opikConfig
-  const providerAllNotConfigured = !langSmithConfig && !langFuseConfig && !opikConfig
+  const providerAllConfigured = langSmithConfig && langFuseConfig && opikConfig && arizePhoenixConfig
+  const providerAllNotConfigured = !langSmithConfig && !langFuseConfig && !opikConfig && !arizePhoenixConfig
 
   const switchContent = (
     <Switch
@@ -126,10 +127,10 @@ const ConfigPopup: FC<PopupProps> = ({
 
   const arizePhoenixPanel = (
     <ProviderPanel
-      type={TracingProvider.opik}
+      type={TracingProvider.arizePhoenix}
       readOnly={readOnly}
-      config={opikConfig}
-      hasConfigured={!!opikConfig}
+      config={arizePhoenixConfig}
+      hasConfigured={!!arizePhoenixConfig}
       onConfig={handleOnConfig(TracingProvider.arizePhoenix)}
       isChosen={chosenProvider === TracingProvider.arizePhoenix}
       onChoose={handleOnChoose(TracingProvider.arizePhoenix)}
@@ -240,7 +241,6 @@ const ConfigPopup: FC<PopupProps> = ({
               </div>
             </>
           )}
-
       </div>
       {isShowConfigModal && (
         <ProviderConfigModal

@@ -1,4 +1,5 @@
 from enum import Enum
+from typing import ClassVar, Literal
 
 from pydantic import BaseModel, ValidationInfo, field_validator
 
@@ -94,9 +95,12 @@ class ArizePhoenixConfig(BaseTracingConfig):
     Model class for Arize Phoenix tracing config.
     """
 
+    DEFAULT_ENDPOINT: ClassVar[str] = "https://app.phoenix.arize.com/v1/traces"
+
     api_key: str | None = None
     project: str | None = None
-    host: str = "https://phoenix.arize.com/v1/traces"
+    protocol: Literal["grpc", "http"] = "grpc"
+    host: str = DEFAULT_ENDPOINT
 
     @field_validator("project")
     @classmethod
@@ -110,12 +114,18 @@ class ArizePhoenixConfig(BaseTracingConfig):
     @classmethod
     def host_validator(cls, v, info: ValidationInfo):
         if v is None or v == "":
-            v = "https://phoenix.arize.com/v1/traces/"
+            v = cls.DEFAULT_HOST
         if not v.startswith(("https://", "http://")):
             raise ValueError("host must start with https:// or http://")
-        if not v.endswith("/v1/traces/"):
-            raise ValueError("host should ends with /v1/traces/")
+        # Remove any trailing slashes for consistent handling
+        v = v.rstrip('/')
+        return v
 
+    @field_validator("protocol")
+    @classmethod
+    def protocol_validator(cls, v):
+        if v not in ["grpc", "http"]:
+            raise ValueError("protocol must be either 'grpc' or 'http'")
         return v
 
 

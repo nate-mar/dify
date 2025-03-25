@@ -1,9 +1,20 @@
+import hashlib
 import json
 import logging
 import os
-import uuid
 from datetime import datetime, timedelta
 from typing import Optional, cast
+
+from openinference.semconv.trace import OpenInferenceSpanKindValues, SpanAttributes
+from opentelemetry import trace
+from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter as GrpcOTLPSpanExporter
+from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter as HttpOTLPSpanExporter
+from opentelemetry.sdk import trace as trace_sdk
+from opentelemetry.sdk.resources import Resource
+from opentelemetry.sdk.trace import Tracer
+from opentelemetry.sdk.trace.export import BatchSpanProcessor
+from opentelemetry.sdk.trace.id_generator import RandomIdGenerator
+from opentelemetry.trace import SpanContext, TraceFlags, TraceState
 
 from core.ops.base_trace_instance import BaseTraceInstance
 from core.ops.entities.config_entity import ArizePhoenixConfig
@@ -25,22 +36,62 @@ from models.workflow import WorkflowNodeExecution
 logger = logging.getLogger(__name__)
 
 
-def wrap_dict(key_name, data):
-    """Make sure that the input data is a dict"""
-    if not isinstance(data, dict):
-        return {key_name: data}
+def setup_tracer(arize_phoenix_config: ArizePhoenixConfig) -> tuple[Tracer, BatchSpanProcessor]:
+    """Configure OpenTelemetry tracer with OTLP exporter for Phoenix"""
+    endpoint = arize_phoenix_config.host.rstrip('/')  
+    headers = {}
+    try:
+        # Choose the appropriate exporter based on protocol
+        if arize_phoenix_config.protocol == "grpc":
+            exporter = GrpcOTLPSpanExporter(
+                endpoint=endpoint,
+                headers=headers,
+                timeout=30 
+            )
+        else:
+            exporter = HttpOTLPSpanExporter(
+                endpoint=endpoint,
+                headers=headers,
+                timeout=30
+            )
+        
+        resource = Resource(attributes={
+            "openinference.project.name": arize_phoenix_config.project
+        })
+        provider = trace_sdk.TracerProvider(resource=resource)
+        
+        # Configure the batch processor with a shorter export interval
+        processor = BatchSpanProcessor(
+            exporter,
+            schedule_delay_millis=1000,  # Export every second
+            max_export_batch_size=100,
+            export_timeout_millis=5000,
+            max_queue_size=1000
+        )
+        provider.add_span_processor(processor)
+        
+        # Create a named tracer instead of setting the global provider
+        tracer_name = f"arize_phoenix_{arize_phoenix_config.project}"
+        logger.info(f"Created tracer with name: {tracer_name}")
+        return trace.get_tracer(tracer_name, tracer_provider=provider), processor
+    except Exception as e:
+        logger.error(f"Failed to setup Arize Phoenix tracer: {str(e)}", exc_info=True)
+        raise
 
-    return data
 
+def datetime_to_millis(dt: datetime) -> int:
+    """Convert datetime to milliseconds since epoch"""
+    return int(dt.timestamp() * 1000)
 
-def wrap_metadata(metadata, **kwargs):
-    """Add common metatada to all Traces and Spans"""
-    metadata["created_from"] = "dify"
-
-    metadata.update(kwargs)
-
-    return metadata
-
+def uuid_to_trace_id(string: str) -> int:
+    """Convert UUID string to a valid trace ID (16-byte integer)"""
+    hash_object = hashlib.sha256(string.encode())
+    
+    # Take the first 16 bytes (128 bits) of the hash
+    digest = hash_object.digest()[:16]
+    
+    # Convert to integer (128 bits)
+    return int.from_bytes(digest, byteorder="big")
 
 class ArizePhoenixDataTrace(BaseTraceInstance):
     def __init__(
@@ -48,206 +99,168 @@ class ArizePhoenixDataTrace(BaseTraceInstance):
         arize_phoenix_config: ArizePhoenixConfig,
     ):
         super().__init__(arize_phoenix_config)
-        self.oi_tracer = OITracer(
-            project_name=arize_phoenix_config.project,
-            host=arize_phoenix_config.url,
-            api_key=arize_phoenix_config.api_key,
-        )
+        import logging
+        logging.basicConfig()
+        logging.getLogger().setLevel(logging.DEBUG)
+        self.arize_phoenix_config = arize_phoenix_config
+        self.tracer, self.processor = setup_tracer(arize_phoenix_config)
         self.project = arize_phoenix_config.project
         self.file_base_url = os.getenv("FILES_URL", "http://127.0.0.1:5001")
 
+    def flush(self):
+        """Force flush any pending spans"""
+        try:
+            if hasattr(self.processor, 'force_flush'):
+                self.processor.force_flush()
+                logger.info("Successfully flushed pending spans")
+        except Exception as e:
+            logger.error(f"Failed to flush spans: {str(e)}", exc_info=True)
+
     def trace(self, trace_info: BaseTraceInfo):
-        if isinstance(trace_info, WorkflowTraceInfo):
-            self.workflow_trace(trace_info)
-        if isinstance(trace_info, MessageTraceInfo):
-            self.message_trace(trace_info)
-        if isinstance(trace_info, ModerationTraceInfo):
-            self.moderation_trace(trace_info)
-        if isinstance(trace_info, SuggestedQuestionTraceInfo):
-            self.suggested_question_trace(trace_info)
-        if isinstance(trace_info, DatasetRetrievalTraceInfo):
-            self.dataset_retrieval_trace(trace_info)
-        if isinstance(trace_info, ToolTraceInfo):
-            self.tool_trace(trace_info)
-        if isinstance(trace_info, GenerateNameTraceInfo):
-            self.generate_name_trace(trace_info)
+        logger.info(f"Arize Phoenix trace: {trace_info}")
+        try:
+            if isinstance(trace_info, WorkflowTraceInfo):
+                self.workflow_trace(trace_info)
+            if isinstance(trace_info, MessageTraceInfo):
+                self.message_trace(trace_info)
+            if isinstance(trace_info, ModerationTraceInfo):
+                self.moderation_trace(trace_info)
+            if isinstance(trace_info, SuggestedQuestionTraceInfo):
+                self.suggested_question_trace(trace_info)
+            if isinstance(trace_info, DatasetRetrievalTraceInfo):
+                self.dataset_retrieval_trace(trace_info)
+            if isinstance(trace_info, ToolTraceInfo):
+                self.tool_trace(trace_info)
+            if isinstance(trace_info, GenerateNameTraceInfo):
+                self.generate_name_trace(trace_info)
+            # Force flush after all traces are processed
+            self.flush()
+        except Exception as e:
+            logger.error(f"Error in Arize Phoenix trace: {str(e)}", exc_info=True)
+            raise
 
     def workflow_trace(self, trace_info: WorkflowTraceInfo):
-        arize_phoenix_trace_id = trace_info.workflow_run_id
-        workflow_metadata = wrap_metadata(
-            trace_info.metadata, message_id=trace_info.message_id, workflow_app_log_id=trace_info.workflow_app_log_id
-        )
-        root_span_id = None
+        if trace_info.message_data is None:
+            return
 
-        if trace_info.message_id:
-            arize_phoenix_trace_id = trace_info.message_id
+        workflow_metadata = {
+            "workflow_id": trace_info.workflow_run_id,
+            "message_id": trace_info.message_id,
+            "workflow_app_log_id": trace_info.workflow_app_log_id,
+            "status": trace_info.workflow_run_status,
+            "status_message": trace_info.error or "",
+            "level": "ERROR" if trace_info.error else "DEFAULT",
+            "total_tokens": trace_info.total_tokens,
+        }
+        workflow_metadata.update(trace_info.metadata)
 
-            trace_data = {
-                "id": arize_phoenix_trace_id,
-                "name": TraceTaskName.MESSAGE_TRACE.value,
-                "start_time": trace_info.start_time,
-                "end_time": trace_info.end_time,
-                "metadata": workflow_metadata,
-                "input": wrap_dict("input", trace_info.workflow_run_inputs),
-                "output": wrap_dict("output", trace_info.workflow_run_outputs),
-                "tags": ["message", "workflow"],
-                "project_name": self.project,
-            }
-            self.add_trace(trace_data)
-
-            root_span_id = trace_info.workflow_run_id,
-            span_data = {
-                "id": root_span_id,
-                "parent_span_id": None,
-                "trace_id": arize_phoenix_trace_id,
-                "name": TraceTaskName.WORKFLOW_TRACE.value,
-                "input": wrap_dict("input", trace_info.workflow_run_inputs),
-                "output": wrap_dict("output", trace_info.workflow_run_outputs),
-                "start_time": trace_info.start_time,
-                "end_time": trace_info.end_time,
-                "metadata": workflow_metadata,
-                "tags": ["workflow"],
-                "project_name": self.project,
-            }
-            self.add_span(span_data)
-        else:
-            trace_data = {
-                "id": arize_phoenix_trace_id,
-                "name": TraceTaskName.MESSAGE_TRACE.value,
-                "start_time": trace_info.start_time,
-                "end_time": trace_info.end_time,
-                "metadata": workflow_metadata,
-                "input": wrap_dict("input", trace_info.workflow_run_inputs),
-                "output": wrap_dict("output", trace_info.workflow_run_outputs),
-                "tags": ["workflow"],
-                "project_name": self.project,
-            }
-            self.add_trace(trace_data)
-
-        # through workflow_run_id get all_nodes_execution
-        workflow_nodes_execution_id_records = (
-            db.session.query(WorkflowNodeExecution.id)
-            .filter(WorkflowNodeExecution.workflow_run_id == trace_info.workflow_run_id)
-            .all()
+        trace_id = uuid_to_trace_id(trace_info.message_id)
+        span_id = RandomIdGenerator().generate_span_id()
+        context = SpanContext(
+            trace_id=trace_id,
+            span_id=span_id,
+            is_remote=False,
+            trace_flags=TraceFlags(TraceFlags.SAMPLED),
+            trace_state=TraceState()
         )
 
-        for node_execution_id_record in workflow_nodes_execution_id_records:
-            node_execution = (
-                db.session.query(
-                    WorkflowNodeExecution.id,
-                    WorkflowNodeExecution.tenant_id,
-                    WorkflowNodeExecution.app_id,
-                    WorkflowNodeExecution.title,
-                    WorkflowNodeExecution.node_type,
-                    WorkflowNodeExecution.status,
-                    WorkflowNodeExecution.inputs,
-                    WorkflowNodeExecution.outputs,
-                    WorkflowNodeExecution.created_at,
-                    WorkflowNodeExecution.elapsed_time,
-                    WorkflowNodeExecution.process_data,
-                    WorkflowNodeExecution.execution_metadata,
-                )
-                .filter(WorkflowNodeExecution.id == node_execution_id_record.id)
-                .first()
-            )
+        workflow_span = self.tracer.start_span(
+            name=TraceTaskName.WORKFLOW_TRACE.value,
+            attributes={
+                SpanAttributes.INPUT_VALUE: json.dumps(trace_info.workflow_run_inputs, ensure_ascii=False),
+                SpanAttributes.OUTPUT_VALUE: json.dumps(trace_info.workflow_run_outputs, ensure_ascii=False),
+                SpanAttributes.OPENINFERENCE_SPAN_KIND: OpenInferenceSpanKindValues.CHAIN.value,
+                SpanAttributes.METADATA: json.dumps(workflow_metadata, ensure_ascii=False),
+                SpanAttributes.SESSION_ID: trace_info.conversation_id,
+            },
+            start_time=datetime_to_millis(trace_info.start_time),
+            context=trace.set_span_in_context(trace.NonRecordingSpan(context)),
+        )
 
-            if not node_execution:
-                continue
-
-            node_execution_id = node_execution.id
-            tenant_id = node_execution.tenant_id
-            app_id = node_execution.app_id
-            node_name = node_execution.title
-            node_type = node_execution.node_type
-            status = node_execution.status
-            if node_type == "llm":
-                inputs = (
-                    json.loads(node_execution.process_data).get("prompts", {}) if node_execution.process_data else {}
-                )
-            else:
-                inputs = json.loads(node_execution.inputs) if node_execution.inputs else {}
-            outputs = json.loads(node_execution.outputs) if node_execution.outputs else {}
-            created_at = node_execution.created_at or datetime.now()
-            elapsed_time = node_execution.elapsed_time
-            finished_at = created_at + timedelta(seconds=elapsed_time)
-
-            execution_metadata = (
-                json.loads(node_execution.execution_metadata) if node_execution.execution_metadata else {}
-            )
-            metadata = execution_metadata.copy()
-            metadata.update(
-                {
-                    "workflow_run_id": trace_info.workflow_run_id,
-                    "node_execution_id": node_execution_id,
-                    "tenant_id": tenant_id,
-                    "app_id": app_id,
-                    "app_name": node_name,
-                    "node_type": node_type,
-                    "status": status,
+        try:
+            # Process workflow nodes
+            for node_execution in self._get_workflow_nodes(trace_info.workflow_run_id):
+                created_at = node_execution.created_at or datetime.now()
+                elapsed_time = node_execution.elapsed_time
+                finished_at = created_at + timedelta(seconds=elapsed_time)
+                
+                process_data = json.loads(node_execution.process_data) if node_execution.process_data else {}
+                
+                node_metadata = {
+                    "node_id": node_execution.id,
+                    "node_type": node_execution.node_type,
+                    "node_status": node_execution.status,
+                    "tenant_id": node_execution.tenant_id,
+                    "app_id": node_execution.app_id,
+                    "app_name": node_execution.title,
+                    "status": node_execution.status,
+                    "level": "ERROR" if node_execution.status != "succeeded" else "DEFAULT",
                 }
-            )
 
-            process_data = json.loads(node_execution.process_data) if node_execution.process_data else {}
-
-            provider = None
-            model = None
-            total_tokens = 0
-            completion_tokens = 0
-            prompt_tokens = 0
-
-            if process_data and process_data.get("model_mode") == "chat":
-                run_type = "llm"
-                provider = process_data.get("model_provider", None)
-                model = process_data.get("model_name", "")
-                metadata.update(
-                    {
-                        "ls_provider": provider,
-                        "ls_model_name": model,
-                    }
+                # Add execution metadata
+                if node_execution.execution_metadata:
+                    node_metadata.update(json.loads(node_execution.execution_metadata))
+                
+                # Determine the correct span kind based on node type
+                span_kind = OpenInferenceSpanKindValues.CHAIN.value
+                if node_execution.node_type == "llm":
+                    span_kind = OpenInferenceSpanKindValues.LLM.value
+                    provider = process_data.get("model_provider")
+                    model = process_data.get("model_name")
+                    if provider:
+                        node_metadata["ls_provider"] = provider
+                    if model:
+                        node_metadata["ls_model_name"] = model
+                    
+                    usage = json.loads(node_execution.outputs).get("usage", {}) if node_execution.outputs else {}
+                    if usage:
+                        node_metadata["total_tokens"] = usage.get("total_tokens", 0)
+                        node_metadata["prompt_tokens"] = usage.get("prompt_tokens", 0)
+                        node_metadata["completion_tokens"] = usage.get("completion_tokens", 0)
+                elif node_execution.node_type == "dataset_retrieval":
+                    span_kind = OpenInferenceSpanKindValues.RETRIEVER.value
+                elif node_execution.node_type == "tool":
+                    span_kind = OpenInferenceSpanKindValues.TOOL.value
+                else:
+                    span_kind = OpenInferenceSpanKindValues.CHAIN.value
+                
+                node_span = self.tracer.start_span(
+                    name=node_execution.node_type,
+                    attributes={
+                        SpanAttributes.INPUT_VALUE: node_execution.inputs or "{}",
+                        SpanAttributes.OUTPUT_VALUE: node_execution.outputs or "{}",                       
+                        SpanAttributes.OPENINFERENCE_SPAN_KIND: span_kind,
+                        SpanAttributes.METADATA: json.dumps(node_metadata, ensure_ascii=False),
+                        SpanAttributes.SESSION_ID: trace_info.conversation_id,
+                    },
+                    start_time=datetime_to_millis(created_at),
                 )
 
                 try:
-                    if outputs.get("usage"):
-                        total_tokens = outputs["usage"].get("total_tokens", 0)
-                        prompt_tokens = outputs["usage"].get("prompt_tokens", 0)
-                        completion_tokens = outputs["usage"].get("completion_tokens", 0)
-                except Exception:
-                    logger.error("Failed to extract usage", exc_info=True)
-
-            else:
-                run_type = "tool"
-
-            parent_span_id = trace_info.workflow_app_log_id or trace_info.workflow_run_id
-
-            if not total_tokens:
-                total_tokens = execution_metadata.get("total_tokens", 0)
-
-            span_data = {
-                "trace_id": arize_phoenix_trace_id,
-                "id": node_execution_id,
-                "parent_span_id": parent_span_id,
-                "name": node_type,
-                "type": run_type,
-                "start_time": created_at,
-                "end_time": finished_at,
-                "metadata": wrap_metadata(metadata),
-                "input": wrap_dict("input", inputs),
-                "output": wrap_dict("output", outputs),
-                "tags": ["node_execution"],
-                "project_name": self.project,
-                "usage": {
-                    "total_tokens": total_tokens,
-                    "completion_tokens": completion_tokens,
-                    "prompt_tokens": prompt_tokens,
-                },
-                "model": model,
-                "provider": provider,
-            }
-
-            self.add_span(span_data)
+                    if node_execution.node_type == "llm":
+                        provider = process_data.get("model_provider")
+                        model = process_data.get("model_name")
+                        if provider:
+                            node_span.set_attribute(SpanAttributes.LLM_PROVIDER, provider)
+                        if model:
+                            node_span.set_attribute(SpanAttributes.LLM_MODEL_NAME, model)
+                        
+                        usage = json.loads(node_execution.outputs).get("usage", {}) if node_execution.outputs else {}
+                        if usage:
+                            node_span.set_attribute(SpanAttributes.LLM_TOKEN_COUNT_TOTAL, usage.get("total_tokens", 0))
+                            node_span.set_attribute(
+                                SpanAttributes.LLM_TOKEN_COUNT_PROMPT, usage.get("prompt_tokens", 0))
+                            node_span.set_attribute(
+                                SpanAttributes.LLM_TOKEN_COUNT_COMPLETION, usage.get("completion_tokens", 0))
+                finally:
+                    node_span.end(end_time=datetime_to_millis(finished_at))
+        finally:
+            workflow_span.end(end_time=datetime_to_millis(trace_info.end_time))
 
     def message_trace(self, trace_info: MessageTraceInfo):
-        # get message file data
+        if trace_info.message_data is None:
+            return
+        
         file_list = cast(list[str], trace_info.file_list) or []
         message_file_data: Optional[MessageFile] = trace_info.message_file_data
 
@@ -255,184 +268,408 @@ class ArizePhoenixDataTrace(BaseTraceInstance):
             file_url = f"{self.file_base_url}/{message_file_data.url}" if message_file_data else ""
             file_list.append(file_url)
 
-        message_data = trace_info.message_data
-        if message_data is None:
-            return
+        message_metadata = {
+            "message_id": trace_info.message_id,
+            "conversation_mode": str(trace_info.conversation_mode),
+            "user_id": trace_info.message_data.from_account_id,
+            "file_list": file_list,
+            "status": trace_info.message_data.status,
+            "status_message": trace_info.error or "",
+            "level": "ERROR" if trace_info.error else "DEFAULT",
+            "total_tokens": trace_info.total_tokens,
+            "prompt_tokens": trace_info.message_tokens,
+            "completion_tokens": trace_info.answer_tokens,
+            "ls_provider": trace_info.message_data.model_provider,
+            "ls_model_name": trace_info.message_data.model_id,
+        }
+        message_metadata.update(trace_info.metadata)
 
-        metadata = trace_info.metadata
-        message_id = trace_info.message_id
-
-        user_id = message_data.from_account_id
-        metadata["user_id"] = user_id
-        metadata["file_list"] = file_list
-
-        if message_data.from_end_user_id:
+        # Add end user data if available
+        if trace_info.message_data.from_end_user_id:
             end_user_data: Optional[EndUser] = (
-                db.session.query(EndUser).filter(EndUser.id == message_data.from_end_user_id).first()
+                db.session.query(EndUser)
+                .filter(EndUser.id == trace_info.message_data.from_end_user_id)
+                .first()
             )
             if end_user_data is not None:
-                end_user_id = end_user_data.session_id
-                metadata["end_user_id"] = end_user_id
+                message_metadata["end_user_id"] = end_user_data.session_id
 
-        trace_data = {
-            "id": message_id,
-            "name": TraceTaskName.MESSAGE_TRACE.value,
-            "start_time": trace_info.start_time,
-            "end_time": trace_info.end_time,
-            "metadata": wrap_metadata(metadata),
-            "input": trace_info.inputs,
-            "output": message_data.answer,
-            "tags": ["message", str(trace_info.conversation_mode)],
-            "project_name": self.project,
+        attributes = {
+            SpanAttributes.INPUT_VALUE: trace_info.message_data.query,
+            SpanAttributes.OUTPUT_VALUE: trace_info.message_data.answer,
+            SpanAttributes.OPENINFERENCE_SPAN_KIND: OpenInferenceSpanKindValues.CHAIN.value,
+            SpanAttributes.METADATA: json.dumps(message_metadata, ensure_ascii=False),
+            SpanAttributes.SESSION_ID: trace_info.message_data.conversation_id,
         }
-        trace = self.add_trace(trace_data)
 
-        span_data = {
-            "trace_id": trace.id,
-            "name": "llm",
-            "type": "llm",
-            "start_time": trace_info.start_time,
-            "end_time": trace_info.end_time,
-            "metadata": wrap_metadata(metadata),
-            "input": {"input": trace_info.inputs},
-            "output": {"output": message_data.answer},
-            "tags": ["llm", str(trace_info.conversation_mode)],
-            "usage": {
-                "completion_tokens": trace_info.answer_tokens,
-                "prompt_tokens": trace_info.message_tokens,
-                "total_tokens": trace_info.total_tokens,
-            },
-            "project_name": self.project,
-        }
-        self.add_span(span_data)
+        # Only add attributes if they are not None
+        if trace_info.total_tokens is not None:
+            attributes[SpanAttributes.LLM_TOKEN_COUNT_TOTAL] = trace_info.total_tokens
+        if trace_info.message_tokens is not None:
+            attributes[SpanAttributes.LLM_TOKEN_COUNT_PROMPT] = trace_info.message_tokens
+        if trace_info.answer_tokens is not None:
+            attributes[SpanAttributes.LLM_TOKEN_COUNT_COMPLETION] = trace_info.answer_tokens
+        if trace_info.message_data.model_id is not None:
+            attributes[SpanAttributes.LLM_MODEL_NAME] = trace_info.message_data.model_id
+        if trace_info.message_data.model_provider is not None:
+            attributes[SpanAttributes.LLM_PROVIDER] = trace_info.message_data.model_provider
+        
+        attributes["start_time"] = trace_info.start_time.isoformat()
+        attributes["end_time"] = trace_info.end_time.isoformat()
+
+        trace_id = RandomIdGenerator().generate_trace_id()
+        span_id = RandomIdGenerator().generate_span_id()
+        logger.info(f"Creating message trace with trace_id: {trace_id} (from message_id: {trace_info.message_id})")
+        context = SpanContext(
+            trace_id=trace_id,
+            span_id=span_id,
+            is_remote=False,
+        )
+
+        message_span = self.tracer.start_span(
+            name=TraceTaskName.MESSAGE_TRACE.value,
+            attributes=attributes,
+            context=trace.set_span_in_context(trace.NonRecordingSpan(context)),
+            start_time=datetime_to_millis(trace_info.start_time),
+        )
+
+        try:
+            if trace_info.error:
+                message_span.add_event(
+                    "exception",
+                    attributes={
+                        "exception.message": trace_info.error,
+                        "exception.type": "Error",
+                        "exception.stacktrace": trace_info.error
+                    }
+                )
+     
+            llm_attributes = {
+                SpanAttributes.OPENINFERENCE_SPAN_KIND: OpenInferenceSpanKindValues.LLM.value,
+                SpanAttributes.INPUT_VALUE: trace_info.message_data.query,
+                SpanAttributes.OUTPUT_VALUE: trace_info.message_data.answer,
+                SpanAttributes.METADATA: json.dumps(message_metadata),
+                SpanAttributes.SESSION_ID: trace_info.message_data.conversation_id,
+            }
+            
+            # Add input messages with indexed attributes
+            if isinstance(trace_info.inputs, list):
+                for i, msg in enumerate(trace_info.inputs):
+                    if isinstance(msg, dict):
+                        llm_attributes[f"{SpanAttributes.LLM_INPUT_MESSAGES}.{i}.message.content"] = msg.get("text", "")
+                        llm_attributes[f"{SpanAttributes.LLM_INPUT_MESSAGES}.{i}.message.role"] = msg.get(
+                            "role", "user")
+            elif isinstance(trace_info.inputs, dict):
+                llm_attributes[f"{SpanAttributes.LLM_INPUT_MESSAGES}.0.message.content"] = json.dumps(trace_info.inputs)
+                llm_attributes[f"{SpanAttributes.LLM_INPUT_MESSAGES}.0.message.role"] = "user"
+            elif isinstance(trace_info.inputs, str):
+                llm_attributes[f"{SpanAttributes.LLM_INPUT_MESSAGES}.0.message.content"] = trace_info.inputs
+                llm_attributes[f"{SpanAttributes.LLM_INPUT_MESSAGES}.0.message.role"] = "user"
+
+            if trace_info.total_tokens is not None and trace_info.total_tokens > 0:
+                llm_attributes[SpanAttributes.LLM_TOKEN_COUNT_TOTAL] = trace_info.total_tokens
+            if trace_info.message_tokens is not None and trace_info.message_tokens > 0:
+                llm_attributes[SpanAttributes.LLM_TOKEN_COUNT_PROMPT] = trace_info.message_tokens
+            if trace_info.answer_tokens is not None and trace_info.answer_tokens > 0:
+                llm_attributes[SpanAttributes.LLM_TOKEN_COUNT_COMPLETION] = trace_info.answer_tokens
+            if trace_info.message_data.model_id is not None:
+                llm_attributes[SpanAttributes.LLM_MODEL_NAME] = trace_info.message_data.model_id
+            if trace_info.message_data.model_provider is not None:
+                llm_attributes[SpanAttributes.LLM_PROVIDER] = trace_info.message_data.model_provider
+            
+            if trace_info.message_data and trace_info.message_data.message_metadata:
+                metadata_dict = json.loads(trace_info.message_data.message_metadata)
+                if model_params := metadata_dict.get("model_parameters"):
+                    llm_attributes[SpanAttributes.LLM_INVOCATION_PARAMETERS] = json.dumps(model_params)
+
+            llm_span = self.tracer.start_span(
+                name="llm",
+                attributes=llm_attributes,
+                start_time=datetime_to_millis(trace_info.start_time),
+            )
+
+            try:
+                if trace_info.error:
+                    llm_span.add_event(
+                        "exception",
+                        attributes={
+                            "exception.message": trace_info.error,
+                            "exception.type": "Error",
+                            "exception.stacktrace": trace_info.error
+                        }
+                    )
+            finally:
+                llm_span.end(end_time=datetime_to_millis(trace_info.end_time))
+        finally:
+            message_span.end(end_time=datetime_to_millis(trace_info.end_time))
 
     def moderation_trace(self, trace_info: ModerationTraceInfo):
         if trace_info.message_data is None:
             return
 
-        start_time = trace_info.start_time or trace_info.message_data.created_at
-
-        span_data = {
-            "trace_id": trace_info.message_id,
-            "name": TraceTaskName.MODERATION_TRACE.value,
-            "type": "tool",
-            "start_time": start_time,
-            "end_time": trace_info.end_time or trace_info.message_data.updated_at,
-            "metadata": wrap_metadata(trace_info.metadata),
-            "input": wrap_dict("input", trace_info.inputs),
-            "output": {
-                "action": trace_info.action,
-                "flagged": trace_info.flagged,
-                "preset_response": trace_info.preset_response,
-                "inputs": trace_info.inputs,
-            },
-            "tags": ["moderation"],
+        metadata = {
+            "message_id": trace_info.message_id,
+            "tool_name": "moderation",
+            "status": trace_info.message_data.status,
+            "status_message": trace_info.error or "",
+            "level": "ERROR" if trace_info.error else "DEFAULT",
         }
+        metadata.update(trace_info.metadata)
 
-        self.add_span(span_data)
+        trace_id = uuid_to_trace_id(trace_info.message_id)
+        span_id = RandomIdGenerator().generate_span_id()
+        context = SpanContext(
+            trace_id=trace_id,
+            span_id=span_id,
+            is_remote=False,
+            trace_flags=TraceFlags(TraceFlags.SAMPLED),
+            trace_state=TraceState()
+        )
+
+        span = self.tracer.start_span(
+            name=TraceTaskName.MODERATION_TRACE.value,
+            attributes={
+                SpanAttributes.INPUT_VALUE: json.dumps(trace_info.inputs, ensure_ascii=False),
+                SpanAttributes.OUTPUT_VALUE: json.dumps({
+                    "action": trace_info.action,
+                    "flagged": trace_info.flagged,
+                    "preset_response": trace_info.preset_response,
+                    "inputs": trace_info.inputs,
+                }, ensure_ascii=False),
+                SpanAttributes.OPENINFERENCE_SPAN_KIND: OpenInferenceSpanKindValues.CHAIN.value,
+                SpanAttributes.METADATA: json.dumps(metadata, ensure_ascii=False),
+                "start_time": trace_info.start_time.isoformat(),
+                "end_time": trace_info.end_time.isoformat(),
+            },
+            start_time=datetime_to_millis(trace_info.start_time),
+            context=trace.set_span_in_context(trace.NonRecordingSpan(context)),
+        )
+
+        try:
+            if trace_info.error:
+                span.add_event(
+                    "exception",
+                    attributes={
+                        "exception.message": trace_info.error,
+                        "exception.type": "Error",
+                        "exception.stacktrace": trace_info.error
+                    }
+                )
+        finally:
+            span.end(end_time=datetime_to_millis(trace_info.end_time))
 
     def suggested_question_trace(self, trace_info: SuggestedQuestionTraceInfo):
-        message_data = trace_info.message_data
-        if message_data is None:
+        if trace_info.message_data is None:
             return
 
-        start_time = trace_info.start_time or message_data.created_at
+        start_time = trace_info.start_time or trace_info.message_data.created_at
+        end_time = trace_info.end_time or trace_info.message_data.updated_at
 
-        span_data = {
-            "trace_id": trace_info.message_id,
-            "name": TraceTaskName.SUGGESTED_QUESTION_TRACE.value,
-            "type": "tool",
-            "start_time": start_time,
-            "end_time": trace_info.end_time or message_data.updated_at,
-            "metadata": wrap_metadata(trace_info.metadata),
-            "input": wrap_dict("input", trace_info.inputs),
-            "output": wrap_dict("output", trace_info.suggested_question),
-            "tags": ["suggested_question"],
+        metadata = {
+            "message_id": trace_info.message_id,
+            "tool_name": "suggested_question",
+            "status": trace_info.status,
+            "status_message": trace_info.error or "",
+            "level": "ERROR" if trace_info.error else "DEFAULT",
+            "total_tokens": trace_info.total_tokens,
+            "ls_provider": trace_info.model_provider,
+            "ls_model_name": trace_info.model_id,
         }
+        metadata.update(trace_info.metadata)
 
-        self.add_span(span_data)
+        trace_id = uuid_to_trace_id(trace_info.message_id)
+        span_id = RandomIdGenerator().generate_span_id()
+        context = SpanContext(
+            trace_id=trace_id,
+            span_id=span_id,
+            is_remote=False,
+            trace_flags=TraceFlags(TraceFlags.SAMPLED),
+            trace_state=TraceState()
+        )
+
+        span = self.tracer.start_span(
+            name=TraceTaskName.SUGGESTED_QUESTION_TRACE.value,
+            attributes={
+                SpanAttributes.INPUT_VALUE: json.dumps(trace_info.inputs, ensure_ascii=False),
+                SpanAttributes.OUTPUT_VALUE: json.dumps(trace_info.suggested_question, ensure_ascii=False),
+                SpanAttributes.OPENINFERENCE_SPAN_KIND: OpenInferenceSpanKindValues.CHAIN.value,
+                SpanAttributes.METADATA: json.dumps(metadata, ensure_ascii=False),
+            },
+            start_time=datetime_to_millis(start_time),
+            context=trace.set_span_in_context(trace.NonRecordingSpan(context)),
+        )
+
+        try:
+            if trace_info.error:
+                span.add_event(
+                    "exception",
+                    attributes={
+                        "exception.message": trace_info.error,
+                        "exception.type": "Error",
+                        "exception.stacktrace": trace_info.error
+                    }
+                )
+        finally:
+            span.end(end_time=datetime_to_millis(end_time))
 
     def dataset_retrieval_trace(self, trace_info: DatasetRetrievalTraceInfo):
         if trace_info.message_data is None:
             return
 
         start_time = trace_info.start_time or trace_info.message_data.created_at
+        end_time = trace_info.end_time or trace_info.message_data.updated_at
 
-        span_data = {
-            "trace_id": trace_info.message_id,
-            "name": TraceTaskName.DATASET_RETRIEVAL_TRACE.value,
-            "type": "tool",
-            "start_time": start_time,
-            "end_time": trace_info.end_time or trace_info.message_data.updated_at,
-            "metadata": wrap_metadata(trace_info.metadata),
-            "input": wrap_dict("input", trace_info.inputs),
-            "output": {"documents": trace_info.documents},
-            "tags": ["dataset_retrieval"],
+        metadata = {
+            "message_id": trace_info.message_id,
+            "tool_name": "dataset_retrieval",
+            "status": trace_info.message_data.status,
+            "status_message": trace_info.error or "",
+            "level": "ERROR" if trace_info.error else "DEFAULT",
+            "ls_provider": trace_info.message_data.model_provider,
+            "ls_model_name": trace_info.message_data.model_id,
         }
+        metadata.update(trace_info.metadata)
 
-        self.add_span(span_data)
+        trace_id = uuid_to_trace_id(trace_info.message_id)
+        span_id = RandomIdGenerator().generate_span_id()
+        context = SpanContext(
+            trace_id=trace_id,
+            span_id=span_id,
+            is_remote=False,
+            trace_flags=TraceFlags(TraceFlags.SAMPLED),
+            trace_state=TraceState()
+        )
+
+        span = self.tracer.start_span(
+            name=TraceTaskName.DATASET_RETRIEVAL_TRACE.value,
+            attributes={
+                SpanAttributes.INPUT_VALUE: json.dumps(trace_info.inputs, ensure_ascii=False),
+                SpanAttributes.OUTPUT_VALUE: json.dumps({"documents": trace_info.documents}, ensure_ascii=False),
+                SpanAttributes.OPENINFERENCE_SPAN_KIND: OpenInferenceSpanKindValues.RETRIEVER.value,
+                SpanAttributes.METADATA: json.dumps(metadata, ensure_ascii=False),
+                "start_time": start_time.isoformat(),
+                "end_time": end_time.isoformat(),
+            },
+            start_time=datetime_to_millis(start_time),
+            context=trace.set_span_in_context(trace.NonRecordingSpan(context)),
+        )
+
+        try:
+            if trace_info.error:
+                span.add_event(
+                    "exception",
+                    attributes={
+                        "exception.message": trace_info.error,
+                        "exception.type": "Error",
+                        "exception.stacktrace": trace_info.error
+                    }
+                )
+        finally:
+            span.end(end_time=datetime_to_millis(end_time))
 
     def tool_trace(self, trace_info: ToolTraceInfo):
-        span_data = {
-            "trace_id": trace_info.message_id,
-            "name": trace_info.tool_name,
-            "type": "tool",
-            "start_time": trace_info.start_time,
-            "end_time": trace_info.end_time,
-            "metadata": wrap_metadata(trace_info.metadata),
-            "input": wrap_dict("input", trace_info.tool_inputs),
-            "output": wrap_dict("output", trace_info.tool_outputs),
-            "tags": ["tool", trace_info.tool_name],
-        }
+        if trace_info.message_data is None:
+            return
 
-        self.add_span(span_data)
+        metadata = {
+            "message_id": trace_info.message_id,
+            "tool_name": trace_info.tool_name,
+            "status": trace_info.message_data.status,
+            "status_message": trace_info.error or "",
+            "level": "ERROR" if trace_info.error else "DEFAULT",
+        }
+        metadata.update(trace_info.metadata)
+
+        trace_id = uuid_to_trace_id(trace_info.message_id)
+        span_id = RandomIdGenerator().generate_span_id()
+        context = SpanContext(
+            trace_id=trace_id,
+            span_id=span_id,
+            is_remote=False,
+            trace_flags=TraceFlags(TraceFlags.SAMPLED),
+            trace_state=TraceState()
+        )
+
+        span = self.tracer.start_span(
+            name=trace_info.tool_name,
+            attributes={
+                SpanAttributes.INPUT_VALUE: json.dumps(trace_info.tool_inputs, ensure_ascii=False),
+                SpanAttributes.OUTPUT_VALUE: json.dumps(trace_info.tool_outputs, ensure_ascii=False),
+                SpanAttributes.OPENINFERENCE_SPAN_KIND: OpenInferenceSpanKindValues.TOOL.value,
+                SpanAttributes.METADATA: json.dumps(metadata, ensure_ascii=False),
+            },
+            start_time=datetime_to_millis(trace_info.start_time),
+            context=trace.set_span_in_context(trace.NonRecordingSpan(context)),
+        )
+
+        try:
+            if trace_info.error:
+                span.add_event(
+                    "exception",
+                    attributes={
+                        "exception.message": trace_info.error,
+                        "exception.type": "Error",
+                        "exception.stacktrace": trace_info.error
+                    }
+                )
+        finally:
+            span.end(end_time=datetime_to_millis(trace_info.end_time))
 
     def generate_name_trace(self, trace_info: GenerateNameTraceInfo):
-        trace_data = {
-            "id": trace_info.message_id,
-            "name": TraceTaskName.GENERATE_NAME_TRACE.value,
-            "start_time": trace_info.start_time,
-            "end_time": trace_info.end_time,
-            "metadata": wrap_metadata(trace_info.metadata),
-            "input": trace_info.inputs,
-            "output": trace_info.outputs,
-            "tags": ["generate_name"],
+        if trace_info.message_data is None:
+            return
+
+        metadata = {
             "project_name": self.project,
+            "message_id": trace_info.message_id,
+            "status": trace_info.message_data.status,
+            "status_message": trace_info.error or "",
+            "level": "ERROR" if trace_info.error else "DEFAULT",
         }
+        metadata.update(trace_info.metadata)
 
-        trace = self.add_trace(trace_data)
+        trace_id = uuid_to_trace_id(trace_info.message_id)
+        span_id = RandomIdGenerator().generate_span_id()
+        context = SpanContext(
+            trace_id=trace_id,
+            span_id=span_id,
+            is_remote=False,
+            trace_flags=TraceFlags(TraceFlags.SAMPLED),
+            trace_state=TraceState()
+        )
 
-        span_data = {
-            "trace_id": trace.id,
-            "name": TraceTaskName.GENERATE_NAME_TRACE.value,
-            "start_time": trace_info.start_time,
-            "end_time": trace_info.end_time,
-            "metadata": wrap_metadata(trace_info.metadata),
-            "input": wrap_dict("input", trace_info.inputs),
-            "output": wrap_dict("output", trace_info.outputs),
-            "tags": ["generate_name"],
-        }
+        span = self.tracer.start_span(
+            name=TraceTaskName.GENERATE_NAME_TRACE.value,
+            attributes={
+                SpanAttributes.INPUT_VALUE: json.dumps(trace_info.inputs, ensure_ascii=False),
+                SpanAttributes.OUTPUT_VALUE: json.dumps(trace_info.outputs, ensure_ascii=False),
+                SpanAttributes.OPENINFERENCE_SPAN_KIND: OpenInferenceSpanKindValues.CHAIN.value,
+                SpanAttributes.METADATA: json.dumps(metadata, ensure_ascii=False),
+                SpanAttributes.SESSION_ID: trace_info.message_data.conversation_id,
+                "start_time": trace_info.start_time.isoformat(),
+                "end_time": trace_info.end_time.isoformat(),
+            },
+            start_time=datetime_to_millis(trace_info.start_time),
+            context=trace.set_span_in_context(trace.NonRecordingSpan(context)),
+        )
 
-        self.add_span(span_data)
-
-    def add_trace(self, arize_phoenix_trace_data: dict) -> Trace:
         try:
-            trace = self.oi_tracer.trace(**arize_phoenix_trace_data)
-            logger.debug("Arize Phoenix Trace created successfully")
-            return trace
-        except Exception as e:
-            raise ValueError(f"Arize Phoenix - Failed to create trace: {str(e)}")
-
-    def add_span(self, arize_phoenix_trace_data: dict):
-        try:
-            self.oi_tracer.span(**arize_phoenix_trace_data)
-            logger.debug("Arize Phoenix Span created successfully")
-        except Exception as e:
-            raise ValueError(f"Arize Phoenix - Failed to create span: {str(e)}")
+            if trace_info.error:
+                span.add_event(
+                    "exception",
+                    attributes={
+                        "exception.message": trace_info.error,
+                        "exception.type": "Error",
+                        "exception.stacktrace": trace_info.error
+                    }
+                )
+        finally:
+            span.end(end_time=datetime_to_millis(trace_info.end_time))
 
     def api_check(self):
         try:
-            self.oi_tracer.auth_check()
+            with self.tracer.start_span("api_check") as span:
+                span.set_attribute("test", "true")
             return True
         except Exception as e:
             logger.info(f"Arize Phoenix API check failed: {str(e)}", exc_info=True)
@@ -440,7 +677,29 @@ class ArizePhoenixDataTrace(BaseTraceInstance):
 
     def get_project_url(self):
         try:
-            return self.oi_tracer.get_project_url(project_name=self.project)
+            return f"{self.arize_phoenix_config.host}/projects/{self.project}"
         except Exception as e:
             logger.info(f"Arize Phoenix get run url failed: {str(e)}", exc_info=True)
             raise ValueError(f"Arize Phoenix get run url failed: {str(e)}")
+
+    def _get_workflow_nodes(self, workflow_run_id: str):
+        """Helper method to get workflow nodes"""
+        workflow_nodes = (
+            db.session.query(
+                WorkflowNodeExecution.id,
+                WorkflowNodeExecution.tenant_id,
+                WorkflowNodeExecution.app_id,
+                WorkflowNodeExecution.title,
+                WorkflowNodeExecution.node_type,
+                WorkflowNodeExecution.status,
+                WorkflowNodeExecution.inputs,
+                WorkflowNodeExecution.outputs,
+                WorkflowNodeExecution.created_at,
+                WorkflowNodeExecution.elapsed_time,
+                WorkflowNodeExecution.process_data,
+                WorkflowNodeExecution.execution_metadata,
+            )
+            .filter(WorkflowNodeExecution.workflow_run_id == workflow_run_id)
+            .all()
+        )
+        return workflow_nodes
