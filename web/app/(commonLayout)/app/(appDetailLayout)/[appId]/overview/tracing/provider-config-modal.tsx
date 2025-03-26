@@ -311,7 +311,7 @@ const ProviderConfigModal: FC<Props> = ({
                             labelClassName='!text-sm'
                             value={(config as ArizePhoenixConfig).host}
                             onChange={handleConfigChange('host')}
-                            placeholder='https://phoenix.arize.com/v1/traces'
+                            placeholder='https://otlp.arize.com/v1/traces'
                           />
                         </>
                       )}

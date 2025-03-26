@@ -75,7 +75,7 @@ class OpsService:
                 project_url = OpsTraceManager.get_trace_config_project_url(decrypt_tracing_config, tracing_provider)
                 new_decrypt_tracing_config.update({"project_url": project_url})
             except Exception:
-                new_decrypt_tracing_config.update({"project_url": "https://phoenix.arize.com/"})
+                new_decrypt_tracing_config.update({"project_url": "https://otlp.arize.com/"})
 
         trace_config_data.tracing_config = new_decrypt_tracing_config
         return trace_config_data.to_dict()
