@@ -162,8 +162,8 @@ const translation = {
       description: 'Opik is an open-source platform for evaluating, testing, and monitoring LLM applications.',
     },
     arizePhoenix: {
-      title: 'Arize Phoenix',
-      description: 'Open-source LLM tracing and evaluation for developing AI-powered applications.',
+      title: 'Arize',
+      description: 'LLM tracing and evaluation for developing AI-powered applications.',
     },
     inUse: 'In use',
     configProvider: {
