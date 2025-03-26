@@ -120,8 +120,8 @@ class ArizePhoenixDataTrace(BaseTraceInstance):
         with self.tracer.start_as_current_span(
             name=TraceTaskName.WORKFLOW_TRACE.value,
             attributes={
-                SpanAttributes.INPUT_VALUE: json.dumps(trace_info.workflow_run_inputs),
-                SpanAttributes.OUTPUT_VALUE: json.dumps(trace_info.workflow_run_outputs),
+                SpanAttributes.INPUT_VALUE: json.dumps(trace_info.workflow_run_inputs, ensure_ascii=False),
+                SpanAttributes.OUTPUT_VALUE: json.dumps(trace_info.workflow_run_outputs, ensure_ascii=False),
                 SpanAttributes.OPENINFERENCE_SPAN_KIND: OpenInferenceSpanKindValues.CHAIN.value,
                 SpanAttributes.METADATA: json.dumps(workflow_metadata)
             }
@@ -291,7 +291,7 @@ class ArizePhoenixDataTrace(BaseTraceInstance):
 
             llm_attributes["start_time"] = trace_info.start_time.isoformat()
             llm_attributes["end_time"] = trace_info.end_time.isoformat()
-            
+
             with self.tracer.start_span(
                 name="llm",
                 attributes=llm_attributes,
@@ -387,8 +387,8 @@ class ArizePhoenixDataTrace(BaseTraceInstance):
         with self.tracer.start_as_current_span(
             name=TraceTaskName.DATASET_RETRIEVAL_TRACE.value,
             attributes={
-                SpanAttributes.INPUT_VALUE: json.dumps(trace_info.inputs),
-                SpanAttributes.OUTPUT_VALUE: json.dumps({"documents": trace_info.documents}),
+                SpanAttributes.INPUT_VALUE: json.dumps(trace_info.inputs, ensure_ascii=False),
+                SpanAttributes.OUTPUT_VALUE: json.dumps({"documents": trace_info.documents}, ensure_ascii=False),
                 SpanAttributes.OPENINFERENCE_SPAN_KIND: OpenInferenceSpanKindValues.RETRIEVER.value,
                 SpanAttributes.METADATA: json.dumps(metadata),
             },
@@ -407,10 +407,10 @@ class ArizePhoenixDataTrace(BaseTraceInstance):
         with self.tracer.start_as_current_span(
             name=trace_info.tool_name,
             attributes={
-                SpanAttributes.INPUT_VALUE: json.dumps(trace_info.tool_inputs),
-                SpanAttributes.OUTPUT_VALUE: json.dumps(trace_info.tool_outputs),
+                SpanAttributes.INPUT_VALUE: json.dumps(trace_info.tool_inputs, ensure_ascii=False),
+                SpanAttributes.OUTPUT_VALUE: json.dumps(trace_info.tool_outputs, ensure_ascii=False),
                 SpanAttributes.OPENINFERENCE_SPAN_KIND: OpenInferenceSpanKindValues.TOOL.value,
-                SpanAttributes.METADATA: json.dumps(metadata),
+                SpanAttributes.METADATA: json.dumps(metadata, ensure_ascii=False),
                 "start_time": trace_info.start_time.isoformat(),
                 "end_time": trace_info.end_time.isoformat(),
             },
@@ -435,8 +435,8 @@ class ArizePhoenixDataTrace(BaseTraceInstance):
         with self.tracer.start_as_current_span(
             name=TraceTaskName.GENERATE_NAME_TRACE.value,
             attributes={
-                SpanAttributes.INPUT_VALUE: json.dumps(trace_info.inputs),
-                SpanAttributes.OUTPUT_VALUE: json.dumps(trace_info.outputs),
+                SpanAttributes.INPUT_VALUE: json.dumps(trace_info.inputs, ensure_ascii=False),
+                SpanAttributes.OUTPUT_VALUE: json.dumps(trace_info.outputs, ensure_ascii=False),
                 SpanAttributes.OPENINFERENCE_SPAN_KIND: OpenInferenceSpanKindValues.TOOL.value,
                 SpanAttributes.METADATA: json.dumps(metadata),
                 "start_time": trace_info.start_time.isoformat(),
