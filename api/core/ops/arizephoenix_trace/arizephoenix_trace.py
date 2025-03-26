@@ -158,14 +158,15 @@ class ArizePhoenixDataTrace(BaseTraceInstance):
                 elif node_execution.node_type in ["tool", "moderation"]:
                     span_kind = OpenInferenceSpanKindValues.TOOL.value
                 
-                with self.tracer.start_as_current_span(
+                with self.tracer.start_span(
                     name=node_execution.node_type,
                     attributes={
                         SpanAttributes.INPUT_VALUE: node_execution.inputs or "{}",
                         SpanAttributes.OUTPUT_VALUE: node_execution.outputs or "{}",
                         SpanAttributes.OPENINFERENCE_SPAN_KIND: span_kind,
                         SpanAttributes.METADATA: json.dumps(node_metadata)
-                    }
+                    },
+                    parent=workflow_span
                 ) as node_span:
                     if node_execution.node_type == "llm":
                         provider = process_data.get("model_provider")
@@ -408,7 +409,7 @@ class ArizePhoenixDataTrace(BaseTraceInstance):
             attributes={
                 SpanAttributes.INPUT_VALUE: json.dumps(trace_info.tool_inputs, ensure_ascii=False),
                 SpanAttributes.OUTPUT_VALUE: json.dumps(trace_info.tool_outputs, ensure_ascii=False),
-                SpanAttributes.OPENINFERENCE_SPAN_KIND: OpenInferenceSpanKindValues.CHAIN.value,
+                SpanAttributes.OPENINFERENCE_SPAN_KIND: OpenInferenceSpanKindValues.TOOL.value,
                 SpanAttributes.METADATA: json.dumps(metadata, ensure_ascii=False),
                 "start_time": trace_info.start_time.isoformat(),
                 "end_time": trace_info.end_time.isoformat(),
@@ -436,7 +437,7 @@ class ArizePhoenixDataTrace(BaseTraceInstance):
             attributes={
                 SpanAttributes.INPUT_VALUE: json.dumps(trace_info.inputs, ensure_ascii=False),
                 SpanAttributes.OUTPUT_VALUE: json.dumps(trace_info.outputs, ensure_ascii=False),
-                SpanAttributes.OPENINFERENCE_SPAN_KIND: OpenInferenceSpanKindValues.CHAIN.value,
+                SpanAttributes.OPENINFERENCE_SPAN_KIND: OpenInferenceSpanKindValues.TOOL.value,
                 SpanAttributes.METADATA: json.dumps(metadata),
                 "start_time": trace_info.start_time.isoformat(),
                 "end_time": trace_info.end_time.isoformat(),
