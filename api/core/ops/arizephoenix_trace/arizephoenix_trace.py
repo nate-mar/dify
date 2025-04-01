@@ -314,10 +314,18 @@ class ArizePhoenixDataTrace(BaseTraceInstance):
                     }
                 )
      
+            # Convert outputs to string based on type
+            if isinstance(trace_info.outputs, dict | list):
+                outputs_str = json.dumps(trace_info.outputs, ensure_ascii=False)
+            elif isinstance(trace_info.outputs, str):
+                outputs_str = trace_info.outputs
+            else:
+                outputs_str = str(trace_info.outputs)
+
             llm_attributes = {
                 SpanAttributes.OPENINFERENCE_SPAN_KIND: OpenInferenceSpanKindValues.LLM.value,
                 SpanAttributes.INPUT_VALUE: json.dumps(trace_info.inputs, ensure_ascii=False),
-                SpanAttributes.OUTPUT_VALUE: json.dumps(trace_info.outputs, ensure_ascii=False),
+                SpanAttributes.OUTPUT_VALUE: outputs_str,
                 SpanAttributes.METADATA: json.dumps(message_metadata, ensure_ascii=False),
                 SpanAttributes.SESSION_ID: trace_info.message_data.conversation_id,
             }
@@ -565,7 +573,7 @@ class ArizePhoenixDataTrace(BaseTraceInstance):
             name=trace_info.tool_name,
             attributes={
                 SpanAttributes.INPUT_VALUE: json.dumps(trace_info.tool_inputs, ensure_ascii=False),
-                SpanAttributes.OUTPUT_VALUE: json.dumps(trace_info.tool_outputs, ensure_ascii=False),
+                SpanAttributes.OUTPUT_VALUE: trace_info.tool_outputs,
                 SpanAttributes.OPENINFERENCE_SPAN_KIND: OpenInferenceSpanKindValues.TOOL.value,
                 SpanAttributes.METADATA: json.dumps(metadata, ensure_ascii=False),
                 SpanAttributes.TOOL_NAME: trace_info.tool_name,
