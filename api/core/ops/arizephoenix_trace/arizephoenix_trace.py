@@ -336,6 +336,10 @@ class ArizePhoenixDataTrace(BaseTraceInstance):
                         llm_attributes[f"{SpanAttributes.LLM_INPUT_MESSAGES}.{i}.message.content"] = msg.get("text", "")
                         llm_attributes[f"{SpanAttributes.LLM_INPUT_MESSAGES}.{i}.message.role"] = msg.get(
                             "role", "user")
+                        # todo: handle assistant and tool role messages, as they don't always
+                        # have a text field, but may have a tool_calls field instead
+                        # e.g. 'tool_calls': [{'id': '98af3a29-b066-45a5-b4b1-46c74ddafc58', 
+                        # 'type': 'function', 'function': {'name': 'current_time', 'arguments': '{}'}}]}
             elif isinstance(trace_info.inputs, dict):
                 llm_attributes[f"{SpanAttributes.LLM_INPUT_MESSAGES}.0.message.content"] = json.dumps(trace_info.inputs)
                 llm_attributes[f"{SpanAttributes.LLM_INPUT_MESSAGES}.0.message.role"] = "user"
