@@ -12,7 +12,7 @@ from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExport
 from opentelemetry.sdk import trace as trace_sdk
 from opentelemetry.sdk.resources import Resource
 from opentelemetry.sdk.trace import Tracer
-from opentelemetry.sdk.trace.export import BatchSpanProcessor
+from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.id_generator import RandomIdGenerator
 from opentelemetry.trace import SpanContext, TraceFlags, TraceState
 
@@ -36,7 +36,7 @@ from models.workflow import WorkflowNodeExecution
 logger = logging.getLogger(__name__)
 
 
-def setup_tracer(arize_phoenix_config: ArizePhoenixConfig) -> tuple[Tracer, BatchSpanProcessor]:
+def setup_tracer(arize_phoenix_config: ArizePhoenixConfig) -> tuple[Tracer, SimpleSpanProcessor]:
     """Configure OpenTelemetry tracer with OTLP exporter for Phoenix"""
     endpoint = arize_phoenix_config.host.rstrip('/')  
     headers = {}
@@ -60,13 +60,8 @@ def setup_tracer(arize_phoenix_config: ArizePhoenixConfig) -> tuple[Tracer, Batc
         })
         provider = trace_sdk.TracerProvider(resource=resource)
         
-        # Configure the batch processor with a shorter export interval
-        processor = BatchSpanProcessor(
+        processor = SimpleSpanProcessor(
             exporter,
-            schedule_delay_millis=1000,  # Export every second
-            max_export_batch_size=100,
-            export_timeout_millis=5000,
-            max_queue_size=1000
         )
         provider.add_span_processor(processor)
         
@@ -79,9 +74,9 @@ def setup_tracer(arize_phoenix_config: ArizePhoenixConfig) -> tuple[Tracer, Batc
         raise
 
 
-def datetime_to_millis(dt: datetime) -> int:
-    """Convert datetime to milliseconds since epoch"""
-    return int(dt.timestamp() * 1000)
+def datetime_to_nanos(dt: datetime) -> int:
+    """Convert datetime to nanoseconds since epoch"""
+    return int(dt.timestamp() * 1_000_000_000)
 
 def uuid_to_trace_id(string: str) -> int:
     """Convert UUID string to a valid trace ID (16-byte integer)"""
@@ -107,14 +102,6 @@ class ArizePhoenixDataTrace(BaseTraceInstance):
         self.project = arize_phoenix_config.project
         self.file_base_url = os.getenv("FILES_URL", "http://127.0.0.1:5001")
 
-    def flush(self):
-        """Force flush any pending spans"""
-        try:
-            if hasattr(self.processor, 'force_flush'):
-                self.processor.force_flush()
-                logger.info("Successfully flushed pending spans")
-        except Exception as e:
-            logger.error(f"Failed to flush spans: {str(e)}", exc_info=True)
 
     def trace(self, trace_info: BaseTraceInfo):
         logger.info(f"Arize Phoenix trace: {trace_info}")
@@ -133,8 +120,7 @@ class ArizePhoenixDataTrace(BaseTraceInstance):
                 self.tool_trace(trace_info)
             if isinstance(trace_info, GenerateNameTraceInfo):
                 self.generate_name_trace(trace_info)
-            # Force flush after all traces are processed
-            self.flush()
+
         except Exception as e:
             logger.error(f"Error in Arize Phoenix trace: {str(e)}", exc_info=True)
             raise
@@ -158,7 +144,6 @@ class ArizePhoenixDataTrace(BaseTraceInstance):
         span_id = RandomIdGenerator().generate_span_id()
         context = SpanContext(
             trace_id=trace_id,
-            span_id=span_id,
             is_remote=False,
             trace_flags=TraceFlags(TraceFlags.SAMPLED),
             trace_state=TraceState()
@@ -173,7 +158,7 @@ class ArizePhoenixDataTrace(BaseTraceInstance):
                 SpanAttributes.METADATA: json.dumps(workflow_metadata, ensure_ascii=False),
                 SpanAttributes.SESSION_ID: trace_info.conversation_id,
             },
-            start_time=datetime_to_millis(trace_info.start_time),
+            start_time=datetime_to_nanos(trace_info.start_time),
             context=trace.set_span_in_context(trace.NonRecordingSpan(context)),
         )
 
@@ -197,7 +182,6 @@ class ArizePhoenixDataTrace(BaseTraceInstance):
                     "level": "ERROR" if node_execution.status != "succeeded" else "DEFAULT",
                 }
 
-                # Add execution metadata
                 if node_execution.execution_metadata:
                     node_metadata.update(json.loads(node_execution.execution_metadata))
                 
@@ -233,7 +217,7 @@ class ArizePhoenixDataTrace(BaseTraceInstance):
                         SpanAttributes.METADATA: json.dumps(node_metadata, ensure_ascii=False),
                         SpanAttributes.SESSION_ID: trace_info.conversation_id,
                     },
-                    start_time=datetime_to_millis(created_at),
+                    start_time=datetime_to_nanos(created_at),
                 )
 
                 try:
@@ -253,9 +237,9 @@ class ArizePhoenixDataTrace(BaseTraceInstance):
                             node_span.set_attribute(
                                 SpanAttributes.LLM_TOKEN_COUNT_COMPLETION, usage.get("completion_tokens", 0))
                 finally:
-                    node_span.end(end_time=datetime_to_millis(finished_at))
+                    node_span.end(end_time=datetime_to_nanos(finished_at))
         finally:
-            workflow_span.end(end_time=datetime_to_millis(trace_info.end_time))
+            workflow_span.end(end_time=datetime_to_nanos(trace_info.end_time))
 
     def message_trace(self, trace_info: MessageTraceInfo):
         if trace_info.message_data is None:
@@ -302,37 +286,23 @@ class ArizePhoenixDataTrace(BaseTraceInstance):
             SpanAttributes.SESSION_ID: trace_info.message_data.conversation_id,
         }
 
-        # Only add attributes if they are not None
-        if trace_info.total_tokens is not None:
-            attributes[SpanAttributes.LLM_TOKEN_COUNT_TOTAL] = trace_info.total_tokens
-        if trace_info.message_tokens is not None:
-            attributes[SpanAttributes.LLM_TOKEN_COUNT_PROMPT] = trace_info.message_tokens
-        if trace_info.answer_tokens is not None:
-            attributes[SpanAttributes.LLM_TOKEN_COUNT_COMPLETION] = trace_info.answer_tokens
-        if trace_info.message_data.model_id is not None:
-            attributes[SpanAttributes.LLM_MODEL_NAME] = trace_info.message_data.model_id
-        if trace_info.message_data.model_provider is not None:
-            attributes[SpanAttributes.LLM_PROVIDER] = trace_info.message_data.model_provider
-        
-        attributes["start_time"] = trace_info.start_time.isoformat()
-        attributes["end_time"] = trace_info.end_time.isoformat()
-
-        trace_id = RandomIdGenerator().generate_trace_id()
-        span_id = RandomIdGenerator().generate_span_id()
-        logger.info(f"Creating message trace with trace_id: {trace_id} (from message_id: {trace_info.message_id})")
-        context = SpanContext(
+        trace_id = uuid_to_trace_id(trace_info.message_id)
+        message_span_id = RandomIdGenerator().generate_span_id()
+        span_context = SpanContext(
             trace_id=trace_id,
-            span_id=span_id,
+            span_id=message_span_id,
             is_remote=False,
+            trace_flags=TraceFlags(TraceFlags.SAMPLED),
+            trace_state=TraceState()
         )
-
+                
         message_span = self.tracer.start_span(
             name=TraceTaskName.MESSAGE_TRACE.value,
             attributes=attributes,
-            context=trace.set_span_in_context(trace.NonRecordingSpan(context)),
-            start_time=datetime_to_millis(trace_info.start_time),
+            start_time=datetime_to_nanos(trace_info.start_time),
+            context=trace.set_span_in_context(span_context),
         )
-
+        
         try:
             if trace_info.error:
                 message_span.add_event(
@@ -346,13 +316,12 @@ class ArizePhoenixDataTrace(BaseTraceInstance):
      
             llm_attributes = {
                 SpanAttributes.OPENINFERENCE_SPAN_KIND: OpenInferenceSpanKindValues.LLM.value,
-                SpanAttributes.INPUT_VALUE: trace_info.message_data.query,
-                SpanAttributes.OUTPUT_VALUE: trace_info.message_data.answer,
-                SpanAttributes.METADATA: json.dumps(message_metadata),
+                SpanAttributes.INPUT_VALUE: json.dumps(trace_info.inputs, ensure_ascii=False),
+                SpanAttributes.OUTPUT_VALUE: json.dumps(trace_info.outputs, ensure_ascii=False),
+                SpanAttributes.METADATA: json.dumps(message_metadata, ensure_ascii=False),
                 SpanAttributes.SESSION_ID: trace_info.message_data.conversation_id,
             }
             
-            # Add input messages with indexed attributes
             if isinstance(trace_info.inputs, list):
                 for i, msg in enumerate(trace_info.inputs):
                     if isinstance(msg, dict):
@@ -372,6 +341,7 @@ class ArizePhoenixDataTrace(BaseTraceInstance):
                 llm_attributes[SpanAttributes.LLM_TOKEN_COUNT_PROMPT] = trace_info.message_tokens
             if trace_info.answer_tokens is not None and trace_info.answer_tokens > 0:
                 llm_attributes[SpanAttributes.LLM_TOKEN_COUNT_COMPLETION] = trace_info.answer_tokens
+                
             if trace_info.message_data.model_id is not None:
                 llm_attributes[SpanAttributes.LLM_MODEL_NAME] = trace_info.message_data.model_id
             if trace_info.message_data.model_provider is not None:
@@ -385,7 +355,8 @@ class ArizePhoenixDataTrace(BaseTraceInstance):
             llm_span = self.tracer.start_span(
                 name="llm",
                 attributes=llm_attributes,
-                start_time=datetime_to_millis(trace_info.start_time),
+                start_time=datetime_to_nanos(trace_info.start_time),
+                context=trace.set_span_in_context(message_span),
             )
 
             try:
@@ -399,9 +370,9 @@ class ArizePhoenixDataTrace(BaseTraceInstance):
                         }
                     )
             finally:
-                llm_span.end(end_time=datetime_to_millis(trace_info.end_time))
+                llm_span.end(end_time=datetime_to_nanos(trace_info.end_time))
         finally:
-            message_span.end(end_time=datetime_to_millis(trace_info.end_time))
+            message_span.end(end_time=datetime_to_nanos(trace_info.end_time))
 
     def moderation_trace(self, trace_info: ModerationTraceInfo):
         if trace_info.message_data is None:
@@ -438,10 +409,8 @@ class ArizePhoenixDataTrace(BaseTraceInstance):
                 }, ensure_ascii=False),
                 SpanAttributes.OPENINFERENCE_SPAN_KIND: OpenInferenceSpanKindValues.CHAIN.value,
                 SpanAttributes.METADATA: json.dumps(metadata, ensure_ascii=False),
-                "start_time": trace_info.start_time.isoformat(),
-                "end_time": trace_info.end_time.isoformat(),
             },
-            start_time=datetime_to_millis(trace_info.start_time),
+            start_time=datetime_to_nanos(trace_info.start_time),
             context=trace.set_span_in_context(trace.NonRecordingSpan(context)),
         )
 
@@ -456,7 +425,7 @@ class ArizePhoenixDataTrace(BaseTraceInstance):
                     }
                 )
         finally:
-            span.end(end_time=datetime_to_millis(trace_info.end_time))
+            span.end(end_time=datetime_to_nanos(trace_info.end_time))
 
     def suggested_question_trace(self, trace_info: SuggestedQuestionTraceInfo):
         if trace_info.message_data is None:
@@ -495,7 +464,7 @@ class ArizePhoenixDataTrace(BaseTraceInstance):
                 SpanAttributes.OPENINFERENCE_SPAN_KIND: OpenInferenceSpanKindValues.CHAIN.value,
                 SpanAttributes.METADATA: json.dumps(metadata, ensure_ascii=False),
             },
-            start_time=datetime_to_millis(start_time),
+            start_time=datetime_to_nanos(start_time),
             context=trace.set_span_in_context(trace.NonRecordingSpan(context)),
         )
 
@@ -510,7 +479,7 @@ class ArizePhoenixDataTrace(BaseTraceInstance):
                     }
                 )
         finally:
-            span.end(end_time=datetime_to_millis(end_time))
+            span.end(end_time=datetime_to_nanos(end_time))
 
     def dataset_retrieval_trace(self, trace_info: DatasetRetrievalTraceInfo):
         if trace_info.message_data is None:
@@ -550,7 +519,7 @@ class ArizePhoenixDataTrace(BaseTraceInstance):
                 "start_time": start_time.isoformat(),
                 "end_time": end_time.isoformat(),
             },
-            start_time=datetime_to_millis(start_time),
+            start_time=datetime_to_nanos(start_time),
             context=trace.set_span_in_context(trace.NonRecordingSpan(context)),
         )
 
@@ -565,26 +534,28 @@ class ArizePhoenixDataTrace(BaseTraceInstance):
                     }
                 )
         finally:
-            span.end(end_time=datetime_to_millis(end_time))
+            span.end(end_time=datetime_to_nanos(end_time))
 
     def tool_trace(self, trace_info: ToolTraceInfo):
         if trace_info.message_data is None:
+            logger.warning("Message data is None, skipping tool trace")
             return
 
         metadata = {
             "message_id": trace_info.message_id,
-            "tool_name": trace_info.tool_name,
-            "status": trace_info.message_data.status,
-            "status_message": trace_info.error or "",
-            "level": "ERROR" if trace_info.error else "DEFAULT",
+            "tool_config": json.dumps(trace_info.tool_config, ensure_ascii=False),
         }
-        metadata.update(trace_info.metadata)
 
         trace_id = uuid_to_trace_id(trace_info.message_id)
-        span_id = RandomIdGenerator().generate_span_id()
-        context = SpanContext(
+        tool_span_id = RandomIdGenerator().generate_span_id()
+        logger.info(f"Creating tool trace with trace_id: {trace_id}, span_id: {tool_span_id}")
+        
+        # Create span context with the same trace_id as the parent 
+        # todo: Create with the appropriate parent span context, so that the tool span is 
+        # a child of the appropriate span (e.g. message span)
+        span_context = SpanContext(
             trace_id=trace_id,
-            span_id=span_id,
+            span_id=tool_span_id,
             is_remote=False,
             trace_flags=TraceFlags(TraceFlags.SAMPLED),
             trace_state=TraceState()
@@ -597,9 +568,11 @@ class ArizePhoenixDataTrace(BaseTraceInstance):
                 SpanAttributes.OUTPUT_VALUE: json.dumps(trace_info.tool_outputs, ensure_ascii=False),
                 SpanAttributes.OPENINFERENCE_SPAN_KIND: OpenInferenceSpanKindValues.TOOL.value,
                 SpanAttributes.METADATA: json.dumps(metadata, ensure_ascii=False),
+                SpanAttributes.TOOL_NAME: trace_info.tool_name,
+                SpanAttributes.TOOL_PARAMETERS: trace_info.tool_parameters,
             },
-            start_time=datetime_to_millis(trace_info.start_time),
-            context=trace.set_span_in_context(trace.NonRecordingSpan(context)),
+            start_time=datetime_to_nanos(trace_info.start_time),
+            context=trace.set_span_in_context(span_context),
         )
 
         try:
@@ -613,7 +586,7 @@ class ArizePhoenixDataTrace(BaseTraceInstance):
                     }
                 )
         finally:
-            span.end(end_time=datetime_to_millis(trace_info.end_time))
+            span.end(end_time=datetime_to_nanos(trace_info.end_time))
 
     def generate_name_trace(self, trace_info: GenerateNameTraceInfo):
         if trace_info.message_data is None:
@@ -649,7 +622,7 @@ class ArizePhoenixDataTrace(BaseTraceInstance):
                 "start_time": trace_info.start_time.isoformat(),
                 "end_time": trace_info.end_time.isoformat(),
             },
-            start_time=datetime_to_millis(trace_info.start_time),
+            start_time=datetime_to_nanos(trace_info.start_time),
             context=trace.set_span_in_context(trace.NonRecordingSpan(context)),
         )
 
@@ -664,7 +637,7 @@ class ArizePhoenixDataTrace(BaseTraceInstance):
                     }
                 )
         finally:
-            span.end(end_time=datetime_to_millis(trace_info.end_time))
+            span.end(end_time=datetime_to_nanos(trace_info.end_time))
 
     def api_check(self):
         try:
